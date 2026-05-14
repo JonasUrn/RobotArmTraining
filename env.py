@@ -44,10 +44,15 @@ class PullBoxEnv(gym.Env):
         self.plane = p.loadURDF("plane.urdf", physicsClientId=self.client)
         self.arm = p.loadURDF(ARM_URDF, basePosition=ARM_BASE, useFixedBase=True, physicsClientId=self.client)
         self.j_idx = []
+        self.finger_idx = []
         for i in range(p.getNumJoints(self.arm, physicsClientId=self.client)):
             info = p.getJointInfo(self.arm, i, physicsClientId=self.client)
+            jname = info[1].decode()
             if info[2] == p.JOINT_REVOLUTE:
                 self.j_idx.append(i)
+            if info[2] == p.JOINT_PRISMATIC and jname in ("fl", "fr"):
+                self.finger_idx.append(i)
+                p.changeDynamics(self.arm, i, lateralFriction=2.0, physicsClientId=self.client)
             if info[12].decode() == "ee":
                 self.ee_link = i
         self._build_box()
@@ -88,6 +93,8 @@ class PullBoxEnv(gym.Env):
             self.constraint = None
         for i, j in enumerate(self.j_idx):
             p.resetJointState(self.arm, j, J_INIT[i], physicsClientId=self.client)
+        for j in self.finger_idx:
+            p.resetJointState(self.arm, j, 0.04, physicsClientId=self.client)
         bx = self.np_random.uniform(-BOX_HALF + BALL_R + 0.005, BOX_HALF - BALL_R - 0.005)
         by = self.np_random.uniform(-BOX_HALF + BALL_R + 0.005, BOX_HALF - BALL_R - 0.005)
         p.resetBasePositionAndOrientation(self.ball, [bx, by, BALL_R + 0.002], [0, 0, 0, 1], physicsClientId=self.client)
@@ -142,6 +149,12 @@ class PullBoxEnv(gym.Env):
             tgt = float(np.clip(tgt, lo, hi))
             p.setJointMotorControl2(self.arm, j, p.POSITION_CONTROL, targetPosition=tgt,
                                     force=40, maxVelocity=3, physicsClientId=self.client)
+        finger_target = 0.012 if action[3] > 0 else 0.04
+        for j in self.finger_idx:
+            p.setJointMotorControl2(self.arm, j, p.POSITION_CONTROL,
+                                    targetPosition=finger_target,
+                                    force=20, maxVelocity=0.5,
+                                    physicsClientId=self.client)
         self._try_grasp(action[3])
         for _ in range(SUBSTEPS):
             p.stepSimulation(physicsClientId=self.client)

@@ -1,19 +1,30 @@
 import os
+import json
 import numpy as np
 import pybullet as p
 import pybullet_data
 import gymnasium as gym
 from gymnasium import spaces
 
-ARM_URDF = os.path.join(os.path.dirname(os.path.abspath(__file__)), "arm.urdf")
+HERE = os.path.dirname(os.path.abspath(__file__))
+ARM_URDF = os.path.join(HERE, "arm.urdf")
+SCENE_PATH = os.path.join(HERE, "scene.json")
 
 ARM_BASE = [-0.45, 0.0, 0.0]
-BOX_CENTER = [0.0, 0.0, 0.0]
-BOX_INNER = 0.15
-BOX_HALF = BOX_INNER / 2
 WALL_T = 0.01
 WALL_H = 0.10
 BALL_R = 0.022
+BALL_JITTER = 0.02
+
+if os.path.exists(SCENE_PATH):
+    _scene = json.load(open(SCENE_PATH))
+    BOX_CENTER = [_scene["box_center"][0], _scene["box_center"][1], 0.0]
+    BOX_HALF_X, BOX_HALF_Y = _scene["box_half"]
+    BALL_SPAWN = _scene["ball_spawn"]
+else:
+    BOX_CENTER = [0.0, 0.0, 0.0]
+    BOX_HALF_X = BOX_HALF_Y = 0.075
+    BALL_SPAWN = [0.0, 0.0]
 
 J_LIMITS = [(-3.14, 3.14), (-1.57, 1.57), (-1.57, 1.57)]
 J_INIT = [0.0, -0.5, 1.0]
@@ -52,7 +63,10 @@ class PullBoxEnv(gym.Env):
                 self.j_idx.append(i)
             if info[2] == p.JOINT_PRISMATIC and jname in ("fl", "fr"):
                 self.finger_idx.append(i)
-                p.changeDynamics(self.arm, i, lateralFriction=2.0, physicsClientId=self.client)
+                p.changeDynamics(self.arm, i, lateralFriction=0.05,
+                                 spinningFriction=0.0, rollingFriction=0.0,
+                                 contactStiffness=2000, contactDamping=50,
+                                 physicsClientId=self.client)
             if info[12].decode() == "ee":
                 self.ee_link = i
         self._build_box()
@@ -60,20 +74,23 @@ class PullBoxEnv(gym.Env):
 
     def _build_box(self):
         cx, cy, _ = BOX_CENTER
-        half_inner = BOX_HALF
+        hx, hy = BOX_HALF_X, BOX_HALF_Y
         h = WALL_H
         wt = WALL_T
         walls = [
-            ([half_inner + wt / 2, 0, h / 2], [wt / 2, half_inner + wt, h / 2]),
-            ([-half_inner - wt / 2, 0, h / 2], [wt / 2, half_inner + wt, h / 2]),
-            ([0, half_inner + wt / 2, h / 2], [half_inner + wt, wt / 2, h / 2]),
-            ([0, -half_inner - wt / 2, h / 2], [half_inner + wt, wt / 2, h / 2]),
+            ([hx + wt / 2, 0, h / 2], [wt / 2, hy + wt, h / 2]),
+            ([-hx - wt / 2, 0, h / 2], [wt / 2, hy + wt, h / 2]),
+            ([0, hy + wt / 2, h / 2], [hx + wt, wt / 2, h / 2]),
+            ([0, -hy - wt / 2, h / 2], [hx + wt, wt / 2, h / 2]),
         ]
         self.walls = []
         for pos, hs in walls:
             cs = p.createCollisionShape(p.GEOM_BOX, halfExtents=hs, physicsClientId=self.client)
             vs = p.createVisualShape(p.GEOM_BOX, halfExtents=hs, rgbaColor=[0.6, 0.4, 0.2, 1], physicsClientId=self.client)
             b = p.createMultiBody(0, cs, vs, basePosition=[cx + pos[0], cy + pos[1], pos[2]], physicsClientId=self.client)
+            p.changeDynamics(b, -1, lateralFriction=0.05,
+                             spinningFriction=0.0, rollingFriction=0.0,
+                             physicsClientId=self.client)
             self.walls.append(b)
 
     def _make_ball(self, pos):
@@ -95,8 +112,14 @@ class PullBoxEnv(gym.Env):
             p.resetJointState(self.arm, j, J_INIT[i], physicsClientId=self.client)
         for j in self.finger_idx:
             p.resetJointState(self.arm, j, 0.04, physicsClientId=self.client)
-        bx = self.np_random.uniform(-BOX_HALF + BALL_R + 0.005, BOX_HALF - BALL_R - 0.005)
-        by = self.np_random.uniform(-BOX_HALF + BALL_R + 0.005, BOX_HALF - BALL_R - 0.005)
+        jx = self.np_random.uniform(-BALL_JITTER, BALL_JITTER)
+        jy = self.np_random.uniform(-BALL_JITTER, BALL_JITTER)
+        bx = float(np.clip(BALL_SPAWN[0] + jx,
+                           BOX_CENTER[0] - BOX_HALF_X + BALL_R + 0.005,
+                           BOX_CENTER[0] + BOX_HALF_X - BALL_R - 0.005))
+        by = float(np.clip(BALL_SPAWN[1] + jy,
+                           BOX_CENTER[1] - BOX_HALF_Y + BALL_R + 0.005,
+                           BOX_CENTER[1] + BOX_HALF_Y - BALL_R - 0.005))
         p.resetBasePositionAndOrientation(self.ball, [bx, by, BALL_R + 0.002], [0, 0, 0, 1], physicsClientId=self.client)
         p.resetBaseVelocity(self.ball, [0, 0, 0], [0, 0, 0], physicsClientId=self.client)
         self.steps = 0
@@ -162,7 +185,9 @@ class PullBoxEnv(gym.Env):
         ee = self._ee_pos()
         ball = self._ball_pos()
         d = np.linalg.norm(ee - ball)
-        outward = max(0.0, max(abs(ball[0]), abs(ball[1])) - BOX_HALF)
+        dx = max(0.0, abs(ball[0] - BOX_CENTER[0]) - BOX_HALF_X)
+        dy = max(0.0, abs(ball[1] - BOX_CENTER[1]) - BOX_HALF_Y)
+        outward = max(dx, dy)
         outside = outward > BALL_R + 0.01
         reward = -d
         if self.grasped:

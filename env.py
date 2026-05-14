@@ -149,15 +149,18 @@ class PullBoxEnv(gym.Env):
         ee = self._ee_pos()
         ball = self._ball_pos()
         d = np.linalg.norm(ee - ball)
-        outside = (abs(ball[0]) > BOX_HALF + BALL_R + 0.01) or (abs(ball[1]) > BOX_HALF + BALL_R + 0.01)
+        outward = max(0.0, max(abs(ball[0]), abs(ball[1])) - BOX_HALF)
+        outside = outward > BALL_R + 0.01
         reward = -d
         if self.grasped:
-            reward += 0.5 + 2.0 * max(0.0, ball[2])
+            lift = min(max(0.0, ball[2]), WALL_H + 0.02)
+            reward += 0.1 + 1.0 * lift + 3.0 * min(outward, 0.15)
         reward -= 0.001 * float(np.sum(np.square(action)))
+        reward -= 0.05
         terminated = False
         info = {"is_success": False}
         if outside:
-            reward += 10.0
+            reward += 50.0
             terminated = True
             info["is_success"] = True
         self.steps += 1

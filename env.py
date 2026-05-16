@@ -7,28 +7,18 @@ import pybullet_data
 import gymnasium as gym
 from gymnasium import spaces
 
-# ---------------------------------------------------------------------------
-# Real Franka Panda + real 2-finger gripper, contact-gated grasping.
-#
-# Robustness design: instead of hand-tuned locked joint angles (fragile, scene
-# specific), every episode reset runs inverse kinematics so the gripper starts
-# hovering directly above the ball, pointing straight down. Non-actuated arm
-# joints are then held at their IK values for the episode; the policy only
-# drives a few joints. This adapts automatically to ANY box/ball the user
-# draws with draw_scene.py.
-# ---------------------------------------------------------------------------
 
 HERE = os.path.dirname(os.path.abspath(__file__))
 PANDA_URDF = os.path.join(pybullet_data.getDataPath(), "franka_panda", "panda.urdf")
 SCENE_PATH = os.path.join(HERE, "scene.json")
 
-ARM_BASE = [-0.45, 0.0, 0.35]          # Panda on a pedestal, reaches down
-PEDESTAL_HALF = [0.06, 0.06, 0.175]    # static support box under the base
-WALL_T = 0.03                          # thick collision walls (anti-tunnel)
-WALL_H = 0.04                          # shallow open tray a real gripper fits
+ARM_BASE = [-0.45, 0.0, 0.35]
+PEDESTAL_HALF = [0.06, 0.06, 0.175]
+WALL_T = 0.03
+WALL_H = 0.04
 BALL_R = 0.025
 BALL_JITTER = 0.02
-HOVER = 0.09                           # IK start height above the ball
+HOVER = 0.09
 
 if os.path.exists(SCENE_PATH):
     _scene = json.load(open(SCENE_PATH))
@@ -40,23 +30,21 @@ else:
     BOX_HALF_X = BOX_HALF_Y = 0.10
     BALL_SPAWN = [0.0, 0.0]
 
-# Actuated arm joints (the policy controls these); everything else is held at
-# the per-episode IK pose. Action = these joint deltas + 1 gripper command.
 ACTUATED = ["panda_joint1", "panda_joint2", "panda_joint4", "panda_joint6"]
 
-DELTA = 0.06               # per-step joint position delta
+DELTA = 0.06
 PANDA_FORCE = 120.0
 PANDA_VMAX = 1.2
-HOLD_FORCE = 160.0         # force holding the non-actuated joints in place
+HOLD_FORCE = 160.0
 FINGER_FORCE = 30.0
 FINGER_VMAX = 0.10
-FINGER_OPEN = 0.04         # Panda finger range: 0.0 = closed, 0.04 = open
+FINGER_OPEN = 0.04
 FINGER_CLOSE = 0.0
-GRASP_NEAR = 0.07          # TCP-ball distance for the "aligned" shaping bonus
+GRASP_NEAR = 0.07
 
 MAX_STEPS = 90
-SUBSTEPS = 8               # more sub-steps per env step (anti-tunnel)
-DOWN_ORN = p.getQuaternionFromEuler([math.pi, 0.0, 0.0])  # gripper points down
+SUBSTEPS = 8
+DOWN_ORN = p.getQuaternionFromEuler([math.pi, 0.0, 0.0])
 
 
 class PullBoxEnv(gym.Env):
@@ -104,7 +92,7 @@ class PullBoxEnv(gym.Env):
         self.right_finger_link = self.name2joint["panda_finger_joint2"]
         self.hand_idx = link2idx["panda_hand"]
         self.ee_link = link2idx["panda_grasptarget"]
-        # arm joints that the policy does NOT control -> held at IK values
+        
         self.hold_idx = [j for j in self.movable
                          if j not in self.act_idx and j not in self.finger_idx]
         self.j_limits = []
@@ -196,7 +184,7 @@ class PullBoxEnv(gym.Env):
         p.resetBasePositionAndOrientation(self.ball, [bx, by, BALL_R + 0.002], [0, 0, 0, 1], physicsClientId=self.client)
         p.resetBaseVelocity(self.ball, [0, 0, 0], [0, 0, 0], physicsClientId=self.client)
 
-        # IK so the gripper starts hovering right above the ball, facing down.
+        
         target = [bx, by, BALL_R + HOVER]
         sol = self._ik(target)
         self.hold_targets = {}
@@ -239,9 +227,6 @@ class PullBoxEnv(gym.Env):
         return any(c[9] > 0.5 for c in cps)
 
     def _update_grasp(self, grip_cmd):
-        """Contact-gated grip: attach only when BOTH fingers physically touch
-        the ball and the gripper is commanded closed. Returns the per-finger
-        contact booleans so the reward can reuse them."""
         left = self._finger_contact(self.left_finger_link)
         right = self._finger_contact(self.right_finger_link)
         if grip_cmd > 0 and not self.grasped and left and right:

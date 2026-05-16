@@ -7,10 +7,7 @@ from stable_baselines3.common.monitor import Monitor
 from stable_baselines3.common.callbacks import BaseCallback
 from env import PullBoxEnv
 
-# Contact-gated grasping on the Panda is a harder task than the old distance
-# magnet, so we let training use most of the hour. The time-budget callback
-# still saves a usable checkpoint if it stops before TOTAL_STEPS.
-TOTAL_STEPS = 150_000
+TOTAL_STEPS = 70_000
 TIME_BUDGET_SEC = 50 * 60
 CKPT_EVERY = 5_000
 CKPT_DIR = "checkpoints"

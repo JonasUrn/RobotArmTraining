@@ -14,22 +14,25 @@ CKPT_DIR = "checkpoints"
 
 
 class LogCallback(BaseCallback):
-    def __init__(self, time_budget, ckpt_every, ckpt_dir):
+    def __init__(self, time_budget, ckpt_every, ckpt_dir, save_checkpoints=True):
         super().__init__()
         self.time_budget = time_budget
         self.ckpt_every = ckpt_every
         self.ckpt_dir = ckpt_dir
+        self.save_checkpoints = save_checkpoints
         self.next_ckpt = ckpt_every
         self.start = None
         self.ep_rewards = []
         self.ep_success = []
         self.ep_steps = []
         self.last_logged = 0
-        os.makedirs(ckpt_dir, exist_ok=True)
+        if save_checkpoints:
+            os.makedirs(ckpt_dir, exist_ok=True)
 
     def _on_training_start(self):
         self.start = time.time()
-        self.model.save(os.path.join(self.ckpt_dir, "ckpt_000000"))
+        if self.save_checkpoints:
+            self.model.save(os.path.join(self.ckpt_dir, "ckpt_000000"))
 
     def _on_step(self):
         infos = self.locals.get("infos", [])
@@ -39,13 +42,14 @@ class LogCallback(BaseCallback):
                 self.ep_rewards.append(ep["r"])
                 self.ep_success.append(1.0 if info.get("is_success", False) else 0.0)
                 self.ep_steps.append(self.num_timesteps)
-        if self.num_timesteps >= self.next_ckpt:
+        if self.save_checkpoints and self.num_timesteps >= self.next_ckpt:
             path = os.path.join(self.ckpt_dir, f"ckpt_{self.num_timesteps:06d}")
             self.model.save(path)
             self.next_ckpt += self.ckpt_every
         if time.time() - self.start > self.time_budget:
             print("Time budget reached, stopping.")
-            self.model.save(os.path.join(self.ckpt_dir, f"ckpt_{self.num_timesteps:06d}"))
+            if self.save_checkpoints:
+                self.model.save(os.path.join(self.ckpt_dir, f"ckpt_{self.num_timesteps:06d}"))
             return False
         n_eps = len(self.ep_rewards)
         if n_eps >= self.last_logged + 25:
@@ -56,7 +60,9 @@ class LogCallback(BaseCallback):
         return True
 
 
-def main():
+def main_train(total_steps=TOTAL_STEPS, time_budget_sec=TIME_BUDGET_SEC,
+               ckpt_every=CKPT_EVERY, ckpt_dir=CKPT_DIR,
+               save_checkpoints=True, save_outputs=True, seed=None):
     env = Monitor(PullBoxEnv(render=False), info_keywords=("is_success",))
     model = SAC(
         "MlpPolicy",
@@ -72,16 +78,22 @@ def main():
         policy_kwargs=dict(net_arch=[128, 128]),
         verbose=0,
         device="cpu",
+        seed=seed,
     )
-    cb = LogCallback(TIME_BUDGET_SEC, CKPT_EVERY, CKPT_DIR)
+    cb = LogCallback(time_budget_sec, ckpt_every, ckpt_dir, save_checkpoints)
     t0 = time.time()
-    model.learn(total_timesteps=TOTAL_STEPS, callback=cb)
+    model.learn(total_timesteps=total_steps, callback=cb)
     print(f"Training wall time: {time.time() - t0:.1f}s")
-    model.save("sac_pullbox")
 
     rewards = np.array(cb.ep_rewards)
     success = np.array(cb.ep_success)
     steps = np.array(cb.ep_steps)
+    result = {"steps": steps, "success": success, "rewards": rewards}
+    if not save_outputs:
+        env.close()
+        return result
+
+    model.save("sac_pullbox")
     np.savez("training_log.npz", rewards=rewards, success=success, steps=steps)
 
     fig, axes = plt.subplots(1, 2, figsize=(12, 4))
@@ -111,7 +123,8 @@ def main():
     plt.savefig("training.png", dpi=120)
     print("Saved training.png and sac_pullbox.zip")
     env.close()
+    return result
 
 
 if __name__ == "__main__":
-    main()
+    main_train()

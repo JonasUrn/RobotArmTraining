@@ -41,6 +41,7 @@ FINGER_VMAX = 0.10
 FINGER_OPEN = 0.04
 FINGER_CLOSE = 0.0
 GRASP_NEAR = 0.07
+REWARD_MODE = "shaped"
 
 MAX_STEPS = 90
 SUBSTEPS = 8
@@ -279,17 +280,20 @@ class PullBoxEnv(gym.Env):
         dy = max(0.0, abs(ball[1] - BOX_CENTER[1]) - BOX_HALF_Y)
         outward = max(dx, dy)
         outside = outward > BALL_R + 0.01
-        reward = -d
-        if self.grasped:
-            lift = min(max(0.0, ball[2]), WALL_H + 0.06)
-            reward += 0.1 + 1.0 * lift + 3.0 * min(outward, 0.15)
+        if REWARD_MODE == "sparse":
+            reward = 0.0
         else:
-            if d < GRASP_NEAR and grip_cmd > 0:
-                reward += 0.05
-            if left or right:
-                reward += 0.02
-        reward -= 0.001 * float(np.sum(np.square(action)))
-        reward -= 0.05
+            reward = -d
+            if self.grasped:
+                lift = min(max(0.0, ball[2]), WALL_H + 0.06)
+                reward += 0.1 + 1.0 * lift + 3.0 * min(outward, 0.15)
+            elif REWARD_MODE != "no_bonus":
+                if d < GRASP_NEAR and grip_cmd > 0:
+                    reward += 0.05
+                if left or right:
+                    reward += 0.02
+            reward -= 0.001 * float(np.sum(np.square(action)))
+            reward -= 0.05
         terminated = False
         info = {"is_success": False}
         if outside:
